@@ -177,6 +177,7 @@ static int fs1816_reg_read_status(struct fs1816_dev *fs1816,
 	if (fs1816 == NULL)
 		return -EINVAL;
 
+	old = 0xbeef; /* fix: Uninitialized variable */
 	for (count = 0; count < FS1816_I2C_RETRY; count++) {
 		ret = fs1816_reg_read(fs1816, reg, &value);
 		if (ret)
@@ -225,7 +226,7 @@ static int fs1816_reg_write(struct fs1816_dev *fs1816,
 static int fs1816_multi_reg_write(struct fs1816_dev *fs1816,
 		const struct reg_sequence *regs, int num_regs)
 {
-	int i, ret;
+	int i, ret = 0;
 
 	if (fs1816 == NULL || regs == NULL)
 		return -EINVAL;
