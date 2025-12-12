@@ -1,6 +1,6 @@
 # FS1816 non-firmware driver
 
-![version](https://img.shields.io/badge/version-v1.1.4-blue)
+![version](https://img.shields.io/badge/version-v1.1.5-blue)
 
 [![kernel-4.19](https://github.com/foursemisource/fs1816non-firmware-drv/actions/workflows/ci-v4.19.yml/badge.svg)](https://github.com/foursemisource/fs1816non-firmware-drv/actions/workflows/ci-v4.19.yml)
 [![kernel-5.15](https://github.com/foursemisource/fs1816non-firmware-drv/actions/workflows/ci-v5.15.yml/badge.svg)](https://github.com/foursemisource/fs1816non-firmware-drv/actions/workflows/ci-v5.15.yml)
@@ -10,7 +10,6 @@
 ## About FS1816
 
 - The FS1816N is a digital input, class-D audio amplifier integrated with Noise Gate function.
-- The FS1816N is for receiver application.
 - It supports both I²S and TDM digital audio interface.
 - The amplifier output noise floor is as low as 7μV attributed to the new architecture.
 - Noise gate function is also supported to achieve better mute performance.
