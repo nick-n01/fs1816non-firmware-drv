@@ -20,7 +20,7 @@
 #include <sound/tlv.h>
 #include <sound/pcm_params.h>
 
-#define FS1816_I2C_VERSION "v1.1.4"
+#define FS1816_I2C_VERSION "v1.1.5"
 #define FS1816_DEVID       (0x34)
 #define FS1816_I2C_RETRY   (5)
 #define FS1816_I2C_MDELAY  (2)
@@ -61,6 +61,11 @@
 #define FS1816_56H_INTCTRL		0x56
 #define FS1816_57H_INTMASK		0x57
 #define FS1816_58H_INTSTAT		0x58
+#define FS1816_5BH_TDMCTRL1		0x5B
+#define FS1816_5CH_TDMCTRL2		0x5C
+#define FS1816_5DH_TDMRXS		0x5D
+#define FS1816_5EH_TDMTXS		0x5E
+#define FS1816_5FH_TDMSRC		0x5F
 #define FS1816_90H_CHIPINI		0x90
 #define FS1816_96H_NGCTRL		0x96
 #define FS1816_97H_AUTOCTRL		0x97
@@ -92,6 +97,9 @@
 #define FS1816_58H_INTS10_MASK		BIT(10)
 #define FS1816_58H_INTS9_MASK		BIT(9)
 #define FS1816_58H_INTS1_MASK		BIT(1)
+#define FS1816_5BH_TDMEN_MASK		BIT(15)
+#define FS1816_5BH_SLOTLEN_SHIFT	0
+#define FS1816_5BH_SLOTLEN_MASK		GENMASK(2, 0)
 #define FS1816_96H_NGDLY_SHIFT		4
 #define FS1816_96H_NGDLY_MASK		GENMASK(6, 4)
 #define FS1816_96H_NGTHD_SHIFT		0
@@ -155,6 +163,8 @@ struct fs1816_hw_params {
 	int channels;
 	unsigned int daifmt;
 	unsigned int invfmt;
+	unsigned int tdm_rx_slot;
+	unsigned int tdm_tx_slot;
 };
 
 struct fs1816_dev {

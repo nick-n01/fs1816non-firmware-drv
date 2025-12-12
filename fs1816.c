@@ -408,6 +408,103 @@ static int fs1816_chip_init(struct fs1816_dev *fs1816)
 	return ret;
 }
 
+static int fs1816_set_tdm_slot_len(struct fs1816_dev *fs1816, uint32_t slot_len)
+{
+	uint16_t tdmctrl;
+	int ret;
+
+	if (slot_len > 32)
+		return -EINVAL;
+
+	/* Using one RX slot only, so we need to use left channel */
+	ret = fs1816_reg_update_bits(fs1816, FS1816_04H_I2SCTRL,
+			FS1816_04H_CHS12_MASK,
+			1 << FS1816_04H_CHS12_SHIFT);
+
+	ret |= fs1816_reg_read(fs1816, FS1816_5BH_TDMCTRL1, &tdmctrl);
+	if (ret)
+		return ret;
+
+	/* TDM switch */
+	tdmctrl |= FS1816_5BH_TDMEN_MASK;
+
+	/* TDM slot length */
+	switch (slot_len) {
+	case 32:
+		tdmctrl = (tdmctrl & ~FS1816_5BH_SLOTLEN_MASK) | 0x6;
+		break;
+	case 16:
+		tdmctrl = (tdmctrl & ~FS1816_5BH_SLOTLEN_MASK) | 0x2;
+		break;
+	default:
+		dev_err(fs1816->dev, "Unsupport slot len:%d\n", slot_len);
+		return -EINVAL;
+	}
+
+	ret |= fs1816_reg_write(fs1816, FS1816_5BH_TDMCTRL1, tdmctrl);
+
+	return ret;
+}
+
+static int fs1816_set_tdm_rx_slot(struct fs1816_dev *fs1816, int rx_slot)
+{
+	if (rx_slot >= 4) {
+		dev_err(fs1816->dev, "Invalid tdm rx slot: %d\n", rx_slot);
+		return -EINVAL;
+	}
+
+	return fs1816_reg_write(fs1816, FS1816_5DH_TDMRXS, (uint16_t)rx_slot);
+}
+
+static int fs1816_set_tdm_tx_slot(struct fs1816_dev *fs1816, int tx_slot)
+{
+	if (tx_slot >= 4) {
+		dev_err(fs1816->dev, "Invalid tdm tx slot: %d\n", tx_slot);
+		return -EINVAL;
+	}
+
+	return fs1816_reg_write(fs1816, FS1816_5EH_TDMTXS, (uint16_t)tx_slot);
+}
+
+static int fs1816_set_tdm_slots(struct fs1816_dev *fs1816)
+{
+	struct fs1816_hw_params *params;
+	int ret;
+
+	params = &fs1816->hw_params;
+	if (params->channels <= 2) /* Use the I2S bus, skip it. */
+		return 0;
+
+	ret = fs1816_set_tdm_slot_len(fs1816, params->bit_width);
+	if (ret)
+		return ret;
+
+	/* Enable RX1 & TX1 */
+	ret = fs1816_reg_write(fs1816, FS1816_5CH_TDMCTRL2, 0x0101);
+	if (ret)
+		return ret;
+
+	ret = fs1816_set_tdm_rx_slot(fs1816, params->tdm_rx_slot);
+	if (ret)
+		return ret;
+
+	ret = fs1816_set_tdm_tx_slot(fs1816, params->tdm_tx_slot);
+	if (ret)
+		return ret;
+
+	/* TX data source: AEC reference. */
+	ret |= fs1816_reg_write(fs1816, FS1816_5FH_TDMSRC, 0x0032);
+	/*
+	 * If the clock polarity isn't set by dai.set_fmt,
+	 * we invert the WS clock for TDM as default: high -> low
+	 */
+	if (params->invfmt == 0xFF)
+		params->invfmt = 1; /* BCK:0, LRCK:1 */
+
+	return ret;
+}
+
+
 static int fs1816_set_hw_params(struct fs1816_dev *fs1816)
 {
 	struct fs1816_hw_params *params;
@@ -432,6 +529,8 @@ static int fs1816_set_hw_params(struct fs1816_dev *fs1816)
 		val |= params->daifmt << FS1816_04H_I2SF_SHIFT;
 	}
 	ret = fs1816_reg_update_bits(fs1816, FS1816_04H_I2SCTRL, mask, val);
+
+	ret |= fs1816_set_tdm_slots(fs1816);
 
 	if (params->invfmt != 0xFF) { /* from dai.set_fmt */
 		mask = FS1816_A0H_CLKSP_MASK;
@@ -1209,6 +1308,9 @@ static const char * const fs1816_lnm_check_thr_txt[] = {
 	"-78dB", "-84dB", "-90dB", "-96dB",
 	"-102dB", "-108dB", "-114dB", "-120dB"
 };
+static const char * const fs1816_tdm_slot_txt[] = {
+	"0", "1", "2", "3"
+};
 
 static const struct soc_enum fs1816_switch_state_enum =
 		SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(fs1816_switch_state_txt),
@@ -1243,6 +1345,9 @@ static const struct soc_enum fs1816_lnm_check_time_enum =
 static const struct soc_enum fs1816_lnm_check_thr_enum =
 		SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(fs1816_lnm_check_thr_txt),
 		fs1816_lnm_check_thr_txt);
+static const struct soc_enum fs1816_tdm_slot_enum =
+		SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(fs1816_tdm_slot_txt),
+		fs1816_tdm_slot_txt);
 
 static int fs1816_amp_switch_get(struct snd_kcontrol *kc,
 		struct snd_ctl_elem_value *uc)
@@ -1900,6 +2005,106 @@ static int fs1816_volume_put(struct snd_kcontrol *kc,
 	return ret;
 }
 
+static int fs1816_tdm_rx_slot_get(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	struct fs1816_dev *fs1816;
+	uint16_t val;
+	int ret;
+
+	fs1816 = snd_soc_component_get_drvdata(snd_soc_kcontrol_component(kc));
+	if (fs1816 == NULL) {
+		pr_err("tdm_rx_slot_get: fs1816 is null");
+		return -EINVAL;
+	}
+
+	mutex_lock(&fs1816_mutex);
+	ret = fs1816_reg_read(fs1816, FS1816_5DH_TDMRXS, &val);
+	uc->value.integer.value[0] = val & 0x000F;
+	mutex_unlock(&fs1816_mutex);
+
+	return ret;
+}
+
+static int fs1816_tdm_rx_slot_put(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	struct fs1816_dev *fs1816;
+	struct soc_enum *e = (struct soc_enum *)kc->private_value;
+	unsigned int rx_slot = uc->value.enumerated.item[0];
+	int ret;
+
+	fs1816 = snd_soc_component_get_drvdata(snd_soc_kcontrol_component(kc));
+	if (fs1816 == NULL) {
+		pr_err("tdm_rx_slot_put: fs1816 is null");
+		return -EINVAL;
+	}
+
+	if (rx_slot >= e->items) {
+		dev_err(fs1816->dev, "Invalid tdm rx slot:%d", rx_slot);
+		return -EINVAL;
+	}
+
+	mutex_lock(&fs1816_mutex);
+	fs1816->hw_params.tdm_rx_slot = rx_slot;
+	ret = fs1816_apply(fs1816, fs1816_set_tdm_rx_slot, rx_slot);
+	mutex_unlock(&fs1816_mutex);
+	if (ret)
+		dev_err(fs1816->dev, "Failed to set rx slot:%d\n", ret);
+
+	return ret;
+}
+
+static int fs1816_tdm_tx_slot_get(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	struct fs1816_dev *fs1816;
+	uint16_t val;
+	int ret;
+
+	fs1816 = snd_soc_component_get_drvdata(snd_soc_kcontrol_component(kc));
+	if (fs1816 == NULL) {
+		pr_err("tdm_tx_slot_get: fs1816 is null");
+		return -EINVAL;
+	}
+
+	mutex_lock(&fs1816_mutex);
+	ret = fs1816_reg_read(fs1816, FS1816_5EH_TDMTXS, &val);
+	uc->value.integer.value[0] = val & 0x000F;
+	mutex_unlock(&fs1816_mutex);
+
+	return ret;
+}
+
+static int fs1816_tdm_tx_slot_put(struct snd_kcontrol *kc,
+		struct snd_ctl_elem_value *uc)
+{
+	struct fs1816_dev *fs1816;
+	struct soc_enum *e = (struct soc_enum *)kc->private_value;
+	unsigned int tx_slot = uc->value.enumerated.item[0];
+	int ret;
+
+	fs1816 = snd_soc_component_get_drvdata(snd_soc_kcontrol_component(kc));
+	if (fs1816 == NULL) {
+		pr_err("tdm_tx_slot_put: fs1816 is null");
+		return -EINVAL;
+	}
+
+	if (tx_slot >= e->items) {
+		dev_err(fs1816->dev, "Invalid tdm tx slot:%d", tx_slot);
+		return -EINVAL;
+	}
+
+	mutex_lock(&fs1816_mutex);
+	fs1816->hw_params.tdm_tx_slot = tx_slot;
+	ret = fs1816_apply(fs1816, fs1816_set_tdm_tx_slot, tx_slot);
+	mutex_unlock(&fs1816_mutex);
+	if (ret)
+		dev_err(fs1816->dev, "Failed to set tx slot:%d\n", ret);
+
+	return ret;
+}
+
 static const struct snd_kcontrol_new fs1816_codec_controls[] = {
 	SOC_ENUM_EXT("fs1816_amp_switch", fs1816_switch_state_enum,
 			fs1816_amp_switch_get, fs1816_amp_switch_put),
@@ -1935,6 +2140,10 @@ static const struct snd_kcontrol_new fs1816_codec_controls[] = {
 	SOC_SINGLE("fs1816_ws_invert", FS1816_A0H_I2SSET, 5, 1, 0),
 	SOC_SINGLE("fs1816_mute", FS1816_AEH_DACCTRL, 8, 1, 0),
 	SOC_SINGLE("fs1816_fade", FS1816_AEH_DACCTRL, 9, 1, 0),
+	SOC_ENUM_EXT("fs1816_tdm_rx_slot", fs1816_tdm_slot_enum,
+			fs1816_tdm_rx_slot_get, fs1816_tdm_rx_slot_put),
+	SOC_ENUM_EXT("fs1816_tdm_tx_slot", fs1816_tdm_slot_enum,
+			fs1816_tdm_tx_slot_get, fs1816_tdm_tx_slot_put),
 };
 
 static const struct snd_kcontrol_new fs1816_dac_port[] = {
@@ -2283,6 +2492,7 @@ static int fs1816_parse_dts_pins(struct fs1816_dev *fs1816)
 static int fs1816_parse_dts(struct fs1816_dev *fs1816)
 {
 	struct device_node *np = fs1816->dev->of_node;
+	struct fs1816_hw_params *params;
 	int ret;
 
 	ret = fs1816_parse_dts_pins(fs1816);
@@ -2299,6 +2509,18 @@ static int fs1816_parse_dts(struct fs1816_dev *fs1816)
 
 	dev_info(fs1816->dev, "parse_dts: channel = %d, volume = 0x%X\n",
 		fs1816->rx_channel, fs1816->rx_volume);
+
+	params = &fs1816->hw_params;
+	ret = of_property_read_u32(np, "fs,tdm_rx_slot", &params->tdm_rx_slot);
+	if (ret)
+		params->tdm_rx_slot = 0;
+
+	ret = of_property_read_u32(np, "fs,tdm_tx_slot", &params->tdm_tx_slot);
+	if (ret)
+		params->tdm_tx_slot = 0;
+
+	dev_info(fs1816->dev, "TDM rx slot=%d, tx slot=%d\n",
+		 params->tdm_rx_slot, params->tdm_tx_slot);
 
 	return 0;
 }
